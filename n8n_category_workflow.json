@@ -1,0 +1,80 @@
+{
+  "name": "Concung Categories Processing",
+  "nodes": [
+    {
+      "parameters": {
+        "filePath": "c:/CollectionData/categories_extracted.json"
+      },
+      "id": "read-json-file",
+      "name": "Read JSON Categories",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// categories_extracted.json structure:\n// [\n//   {\n//     name: \"Sữa bột cao cấp\",\n//     url: \"https://concung.com/sua-bot-101586.html\",\n//     children: [\n//       { name: \"Sữa Mỹ\", url: \"...\", children: [] },\n//       ...\n//     ]\n//   }\n// ]\n\nconst data = $input.first().json;\n\n// Utility: slugify\nfunction toSlug(str) {\n  return str\n    .toLowerCase()\n    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/[^a-z0-9\\s-]/g, '')\n    .replace(/\\s+/g, '-')\n    .replace(/-+/g, '-')\n    .trim();\n}\n\n// Utility: extract slug from URL\nfunction urlToSlug(url) {\n  if (!url) return '';\n  const parts = url.replace('https://concung.com/', '').replace('http://concung.com/', '').split('.html')[0];\n  return toSlug(parts);\n}\n\n// Flatten all categories\nlet categoryId = 1;\nlet rows = [];\n\nfor (const parent of data) {\n  const parentSlug = urlToSlug(parent.url);\n  const parentId = categoryId++;\n\n  // Level 1: Parent category\n  rows.push({\n    category_id: parentId,\n    created_at: new Date().toISOString(),\n    display_order: 1,\n    description: '',\n    category_image_url: '',\n    is_active: true,\n    name: parent.name.trim(),\n    slug: parentSlug,\n    category_url: parent.url,\n    parent_slug: '',\n    parent_id: 0,\n    level: 1\n  });\n\n  // Level 2: Children\n  for (const child of (parent.children || [])) {\n    const childSlug = urlToSlug(child.url);\n    const childId = categoryId++;\n\n    rows.push({\n      category_id: childId,\n      created_at: new Date().toISOString(),\n      display_order: 2,\n      description: '',\n      category_image_url: '',\n      is_active: true,\n      name: child.name.trim(),\n      slug: childSlug,\n      category_url: child.url,\n      parent_slug: parentSlug,\n      parent_id: parentId,\n      level: 2\n    });\n\n    // Level 3: Grandchildren\n    for (const grandchild of (child.children || [])) {\n      const grandchildSlug = urlToSlug(grandchild.url);\n      const grandchildId = categoryId++;\n\n      rows.push({\n        category_id: grandchildId,\n        created_at: new Date().toISOString(),\n        display_order: 3,\n        description: '',\n        category_image_url: '',\n        is_active: true,\n        name: grandchild.name.trim(),\n        slug: grandchildSlug,\n        category_url: grandchild.url,\n        parent_slug: childSlug,\n        parent_id: childId,\n        level: 3\n      });\n    }\n  }\n}\n\n// Remove internal 'level' field for final output\nconst finalRows = rows.map(r => {\n  const { level, ...out } = r;\n  return out;\n});\n\nreturn finalRows.map(r => ({ json: r }));"
+      },
+      "id": "flatten-categories",
+      "name": "Flatten Categories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "fileName": "c:/CollectionData/output_categories.csv",
+        "options": {
+          "headers": "category_id,created_at,display_order,description,category_image_url,is_active,name,slug,category_url,parent_slug,parent_id"
+        }
+      },
+      "id": "write-csv",
+      "name": "Write CSV",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Output JSON for API\nconst items = $input.all();\nreturn items.map(item => ({\n  json: {\n    ...item.json,\n    // Ensure proper types\n    category_id: Number(item.json.category_id),\n    display_order: Number(item.json.display_order),\n    is_active: item.json.is_active === true,\n    parent_id: Number(item.json.parent_id)\n  }\n}));"
+      },
+      "id": "format-output",
+      "name": "Format for Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 500]
+    },
+    {
+      "parameters": {
+        "fileName": "c:/CollectionData/output_categories.json",
+        "fileFormat": "json"
+      },
+      "id": "write-json",
+      "name": "Write JSON",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [910, 500]
+    }
+  ],
+  "connections": {
+    "Read JSON Categories": {
+      "main": [
+        [{ "node": "Flatten Categories", "type": "main", "index": 0 }]
+      ]
+    },
+    "Flatten Categories": {
+      "main": [
+        [{ "node": "Write CSV", "type": "main", "index": 0 }],
+        [{ "node": "Format for Output", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format for Output": {
+      "main": [
+        [{ "node": "Write JSON", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "id": "concung-categories-workflow"
+}
