@@ -1,6 +1,6 @@
 // ============================================================
-// Script merge all CSV files into one dataset
-// Handle quoted CSV properly
+// Script merge all CSV files - PROPER CSV PARSING
+// Handles quoted fields with commas correctly
 // ============================================================
 const fs = require('fs');
 const path = require('path');
@@ -9,7 +9,6 @@ const readline = require('readline');
 const baseDir = 'c:/CollectionData/Dataset';
 const outputDir = 'c:/CollectionData';
 
-// Source files
 const files = [
   { file: 'Dataset DATN - Dataset - Concung.csv', source: 'concung' },
   { file: 'Dataset DATN - Dataset - Emart.csv', source: 'emart' },
@@ -25,10 +24,16 @@ const files = [
   { file: 'Ecommerce Dataset - Dataset - Yody.csv', source: 'yody' },
 ];
 
-const headerCount = 23;
-const headers = 'product_id,product_name,description,category_name,category_slug,category_url,category_image_url,brand,price,original_price,currency,stock,rating,reviews_count,thumbnail_url,image_urls,tags,color,size,material,product_url,source,searchable_text';
+// Header columns (in order)
+const headers = [
+  'product_id', 'product_name', 'description', 'category_name', 'category_slug',
+  'category_url', 'category_image_url', 'brand', 'price', 'original_price',
+  'currency', 'stock', 'rating', 'reviews_count', 'thumbnail_url', 'image_urls',
+  'tags', 'color', 'size', 'material', 'product_url', 'source', 'searchable_text'
+];
+const HEADER_COUNT = 23;
 
-// Parse CSV line properly (handle quoted commas)
+// Proper CSV parser - handles quoted commas
 function parseCSVLine(line) {
   const result = [];
   let current = '';
@@ -45,13 +50,13 @@ function parseCSVLine(line) {
         inQuotes = !inQuotes;
       }
     } else if (char === ',' && !inQuotes) {
-      result.push(current);
+      result.push(current.trim());
       current = '';
     } else {
       current += char;
     }
   }
-  result.push(current);
+  result.push(current.trim());
   
   return result;
 }
@@ -66,57 +71,66 @@ function escapeCSV(value) {
   return str;
 }
 
+// Process single file
 function processFile(filePath, source, startId) {
   return new Promise((resolve, reject) => {
     const rows = [];
     let globalProductId = startId;
+    let skipped = 0;
     
     const rl = readline.createInterface({
       input: fs.createReadStream(filePath, { encoding: 'utf8' }),
       crlfDelay: Infinity
     });
     
-    let isFirstLine = true;
+    let lineNum = 0;
     
     rl.on('line', (line) => {
-      if (isFirstLine) {
-        isFirstLine = false;
+      lineNum++;
+      
+      // Skip header
+      if (lineNum === 1) return;
+      
+      if (!line.trim()) return;
+      
+      const values = parseCSVLine(line);
+      
+      // Only process if we have reasonable columns
+      if (values.length < 5) {
+        skipped++;
         return;
       }
       
-      if (line.trim()) {
-        const values = parseCSVLine(line);
-        
-        // Pad with empty values if needed
-        while (values.length < headerCount) {
-          values.push('');
-        }
-        
-        // Update product_id (column 0)
-        values[0] = globalProductId++;
-        
-        // Update source (column 21)
-        if (values.length > 21) {
-          values[21] = source;
-        }
-        
-        // Escape all values
-        const escapedValues = values.map((v, i) => {
-          if (i === 0) return v; // product_id no escape
-          return escapeCSV(v);
-        });
-        
-        rows.push(escapedValues.join(','));
+      // Pad with empty if needed
+      while (values.length < HEADER_COUNT) {
+        values.push('');
       }
+      
+      // Take only first 23 columns
+      const limited = values.slice(0, HEADER_COUNT);
+      
+      // Update product_id
+      limited[0] = globalProductId++;
+      
+      // Update source
+      limited[21] = source;
+      
+      rows.push(limited);
     });
     
-    rl.on('close', () => resolve({ rows, newStartId: globalProductId }));
+    rl.on('close', () => {
+      if (skipped > 0) {
+        console.log(`  ⚠️ Skipped ${skipped} invalid rows`);
+      }
+      resolve({ rows, newStartId: globalProductId });
+    });
     rl.on('error', reject);
   });
 }
 
+// Main
 async function main() {
-  console.log('=== MERGING DATASETS ===\n');
+  console.log('=== MERGING DATASETS (Proper CSV Parser) ===\n');
   
   let globalProductId = 1;
   const allRows = [headers];
@@ -127,16 +141,16 @@ async function main() {
     
     try {
       const result = await processFile(filePath, source, globalProductId);
-      allRows.push(...result.rows);
+      allRows.push(...result.rows.map(r => r.map((v, i) => i === 0 ? v : escapeCSV(v)).join(',')));
       
-      console.log(`  - Processed ${result.rows.length} rows`);
+      console.log(`  ✅ Processed ${result.rows.length} rows`);
       globalProductId = result.newStartId;
     } catch (e) {
-      console.log(`  - Error: ${e.message}`);
+      console.log(`  ❌ Error: ${e.message}`);
     }
   }
   
-  // Write output with BOM for Excel UTF-8 compatibility
+  // Write output with BOM
   const outputPath = path.join(outputDir, 'Merged_Ecommerce_Dataset.csv');
   const outputContent = allRows.join('\r\n');
   fs.writeFileSync(outputPath, '\ufeff' + outputContent, 'utf8');
